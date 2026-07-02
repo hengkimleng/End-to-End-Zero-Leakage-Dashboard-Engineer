@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Executive Cohort Overview</title>
+    
+    <!-- Zero-Leakage Client-Side Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-panel: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-teal: #14b8a6;
+            --border-color: #334155;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h1 { margin: 0; font-size: 24px; font-weight: 500; }
+        
+        .upload-btn-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+        
+        .btn {
+            border: 1px solid var(--accent-teal);
+            color: var(--bg-dark);
+            background-color: var(--accent-teal);
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .upload-btn-wrapper input[type=file] {
+            font-size: 100px;
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        /* KPI Cards */
+        .kpi-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .kpi-card {
+            background-color: var(--bg-panel);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .kpi-title { font-size: 13px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .kpi-value { font-size: 28px; font-weight: bold; margin-top: 8px; color: var(--accent-teal); }
+
+        /* Filters */
+        .filters-container {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 24px;
+            background-color: var(--bg-panel);
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        select {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 8px 12px;
+            border-radius: 4px;
+            flex: 1;
+            outline: none;
+        }
+
+        /* Charts Grid */
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .chart-card {
+            background-color: var(--bg-panel);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 16px;
+            height: 400px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Executive Cohort Overview</h1>
+        <div class="upload-btn-wrapper">
+            <button class="btn">Upload CSV File</button>
+            <input type="file" id="fileInput" accept=".csv" />
+        </div>
+    </header>
+
+    <div class="filters-container">
+        <select id="filterMinistry"><option value="all">All Ministries</option></select>
+        <select id="filterEducation"><option value="all">All Education Levels</option></select>
+    </div>
+
+    <div class="kpi-container">
+        <div class="kpi-card">
+            <div class="kpi-title">Total Trainees</div>
+            <div class="kpi-value" id="kpiTotal">0</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Avg. Age</div>
+            <div class="kpi-value" id="kpiAge">0</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Avg. Years of Service</div>
+            <div class="kpi-value" id="kpiYos">0</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-title">Gender Split (M/F)</div>
+            <div class="kpi-value" id="kpiGender">0% / 0%</div>
+        </div>
+    </div>
+
+    <div class="charts-container">
+        <div class="chart-card" id="chartScatter"></div>
+        <div class="chart-card" id="chartTreemap"></div>
+        <div class="chart-card" id="chartDonut"></div>
+        <div class="chart-card" id="chartPyramid"></div>
+    </div>
+
+    <script>
+        // Mappings based on Phase 1 specs
+        const edMap = { '1': 'High School', '2': 'Bachelor', '3': 'Master', '4': 'PhD' };
+        let globalData = [];
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            Papa.parse(file, {
+                header: false, // Using array indices based on specs (Col 6, Col 10, etc.)
+                skipEmptyLines: true,
+                complete: function(results) {
+                    processData(results.data);
+                }
+            });
+        });
+
+        function processData(rawData) {
+            // Remove header row if text is detected in numeric columns
+            if (isNaN(parseFloat(rawData[0][6]))) rawData.shift();
+
+            globalData = rawData.map(row => ({
+                ministry: row[2] || 'Unknown',
+                age: parseFloat(row[6]) || 0,
+                gender: row[7] == '1' ? 'Male' : (row[7] == '2' ? 'Female' : 'Unknown'),
+                education: edMap[row[8]] || 'Unknown',
+                yos: parseFloat(row[10]) || 0
+            })).filter(d => d.age > 0); // Clean invalid rows
+
+            populateFilters();
+            renderDashboard(globalData);
+        }
+
+        function populateFilters() {
+            const ministries = [...new Set(globalData.map(d => d.ministry))].sort();
+            const educations = [...new Set(globalData.map(d => d.education))].sort();
+
+            const minSelect = document.getElementById('filterMinistry');
+            const edSelect = document.getElementById('filterEducation');
+            
+            minSelect.innerHTML = '<option value="all">All Ministries</option>';
+            edSelect.innerHTML = '<option value="all">All Education Levels</option>';
+
+            ministries.forEach(m => minSelect.add(new Option(m, m)));
+            educations.forEach(e => edSelect.add(new Option(e, e)));
+        }
+
+        document.getElementById('filterMinistry').addEventListener('change', applyFilters);
+        document.getElementById('filterEducation').addEventListener('change', applyFilters);
+
+        function applyFilters() {
+            const min = document.getElementById('filterMinistry').value;
+            const ed = document.getElementById('filterEducation').value;
+
+            const filtered = globalData.filter(d => {
+                return (min === 'all' || d.ministry === min) &&
+                       (ed === 'all' || d.education === ed);
+            });
+
+            renderDashboard(filtered);
+        }
+
+        function renderDashboard(data) {
+            if (!data.length) return;
+
+            // KPIs
+            const total = data.length;
+            const avgAge = (data.reduce((sum, d) => sum + d.age, 0) / total).toFixed(1);
+            const avgYos = (data.reduce((sum, d) => sum + d.yos, 0) / total).toFixed(1);
+            const males = data.filter(d => d.gender === 'Male').length;
+            const mPct = Math.round((males / total) * 100);
+            
+            document.getElementById('kpiTotal').innerText = total;
+            document.getElementById('kpiAge').innerText = avgAge;
+            document.getElementById('kpiYos').innerText = avgYos;
+            document.getElementById('kpiGender').innerText = `${mPct}% / ${100 - mPct}%`;
+
+            // Common Plotly Layout settings
+            const layoutBase = {
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#94a3b8' },
+                margin: { t: 40, r: 20, l: 40, b: 40 }
+            };
+
+            // 1. Scatter Plot
+            Plotly.newPlot('chartScatter', [{
+                x: data.map(d => d.age),
+                y: data.map(d => d.yos),
+                mode: 'markers',
+                type: 'scatter',
+                marker: { color: '#14b8a6', opacity: 0.6, size: 8 }
+            }], { ...layoutBase, title: { text: 'Age vs Years of Service', font: { color: '#f8fafc' } } });
+
+            // 2. Treemap (Ministries)
+            const minCounts = data.reduce((acc, d) => { acc[d.ministry] = (acc[d.ministry] || 0) + 1; return acc; }, {});
+            const minLabels = Object.keys(minCounts);
+            const minVals = Object.values(minCounts);
+            
+            Plotly.newPlot('chartTreemap', [{
+                type: 'treemap',
+                labels: minLabels,
+                parents: Array(minLabels.length).fill(''),
+                values: minVals,
+                marker: { colorscale: 'Blues' }
+            }], { ...layoutBase, title: { text: 'Institutional Representation', font: { color: '#f8fafc' } }, margin: { t: 40, r: 0, l: 0, b: 0 } });
+
+            // 3. Donut (Education)
+            const edCounts = data.reduce((acc, d) => { acc[d.education] = (acc[d.education] || 0) + 1; return acc; }, {});
+            Plotly.newPlot('chartDonut', [{
+                values: Object.values(edCounts),
+                labels: Object.keys(edCounts),
+                type: 'pie',
+                hole: 0.6,
+                marker: { colors: ['#14b8a6', '#3b82f6', '#8b5cf6', '#64748b'] }
+            }], { ...layoutBase, title: { text: 'Educational Attainment', font: { color: '#f8fafc' } } });
+
+            // 4. Diverging Bar (Pyramid Mock)
+            const ageBuckets = { '20-29': {M:0, F:0}, '30-39': {M:0, F:0}, '40-49': {M:0, F:0}, '50+': {M:0, F:0} };
+            data.forEach(d => {
+                let bucket = d.age < 30 ? '20-29' : (d.age < 40 ? '30-39' : (d.age < 50 ? '40-49' : '50+'));
+                if (d.gender === 'Male') ageBuckets[bucket].M++;
+                else if (d.gender === 'Female') ageBuckets[bucket].F++;
+            });
+
+            const yLabels = Object.keys(ageBuckets);
+            Plotly.newPlot('chartPyramid', [
+                { type: 'bar', x: yLabels.map(k => ageBuckets[k].M * -1), y: yLabels, orientation: 'h', name: 'Male', marker: { color: '#14b8a6' } },
+                { type: 'bar', x: yLabels.map(k => ageBuckets[k].F), y: yLabels, orientation: 'h', name: 'Female', marker: { color: '#64748b' } }
+            ], { ...layoutBase, barmode: 'relative', title: { text: 'Demographic Composition', font: { color: '#f8fafc' } } });
+        }
+    </script>
+</body>
+</html>
